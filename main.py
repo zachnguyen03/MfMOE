@@ -1,4 +1,4 @@
-from utils import prep_unet, AttentionStore
+from utils.utils_net import prep_unet, AttentionStore
 from tqdm import tqdm
 from PIL import Image
 import numpy as np
@@ -9,13 +9,16 @@ import torch
 from transformers import CLIPTextModel, CLIPTokenizer, logging
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler
 from ddim_inv import ddim_inversion
+from lavis.models import load_model_and_preprocess, load_model
+
+from utils.nti import NullInversion
 
 logging.set_verbosity_error()
 
 def seed_everything(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
-    torch.set_default_dtype(torch.float16)
+    torch.set_default_dtype(torch.float32)
 
 def get_views(panorama_height, panorama_width, window_size=64, stride=8):
     panorama_height /= 8
@@ -63,7 +66,6 @@ class MfMOEPipeline(nn.Module):
             model_key, subfolder="text_encoder").to(self.device)
         self.unet = UNet2DConditionModel.from_pretrained(
             model_key, subfolder="unet").to(self.device)
-
         self.unet = prep_unet(self.unet)
 
         self.scheduler = DDIMScheduler.from_pretrained(
@@ -158,6 +160,68 @@ class MfMOEPipeline(nn.Module):
         imgs = self.decode_latents(latent.type(torch.cuda.HalfTensor))
         img = T.ToPILImage()(imgs[0].cpu())
         return img, noise_loss_list
+    
+    #TODO
+    def invert(
+        self,
+        start_latents,
+        prompt,
+        guidance_scale=3.5,
+        num_inference_steps=80,
+        num_images_per_prompt=1,
+        do_classifier_free_guidance=True,
+        negative_prompt="",
+        ):
+
+        # Encode prompt
+        text_embeddings = self.get_text_embeds(prompt, negative_prompt)
+
+        # Latents are now the specified start latents
+        latents = start_latents.clone()
+
+        # We'll keep a list of the inverted latents as the process goes on
+        intermediate_latents = []
+
+        # Set num inference steps
+        self.scheduler.set_timesteps(num_inference_steps, device=device)
+
+        # Reversed timesteps <<<<<<<<<<<<<<<<<<<<
+        timesteps = reversed(self.scheduler.timesteps)
+
+        for i in tqdm(range(1, num_inference_steps), total=num_inference_steps - 1):
+
+            # We'll skip the final iteration
+            if i >= num_inference_steps - 1:
+                continue
+
+            t = timesteps[i]
+
+            # Expand the latents if we are doing classifier free guidance
+            latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+            latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+
+            # Predict the noise residual
+            noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=text_embeddings).sample
+
+            # Perform guidance
+            if do_classifier_free_guidance:
+                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+
+            current_t = max(0, t.item() - (1000 // num_inference_steps))  # t
+            next_t = t  # min(999, t.item() + (1000//num_inference_steps)) # t+1
+            alpha_t = self.scheduler.alphas_cumprod[current_t]
+            alpha_t_next = self.scheduler.alphas_cumprod[next_t]
+
+            # Inverted update step (re-arranging the update step to get x(t) (new latents) as a function of x(t-1) (current latents)
+            latents = (latents - (1 - alpha_t).sqrt() * noise_pred) * (alpha_t_next.sqrt() / alpha_t.sqrt()) + (
+                1 - alpha_t_next
+            ).sqrt() * noise_pred
+
+            # Store
+            intermediate_latents.append(latents)
+
+        return torch.cat(intermediate_latents)
 
     def generate(self, masks, prompts, negative_prompts='', height=512, width=2048, num_inference_steps=50, guidance_scale=7.5, bootstrapping=20, ca_coef=1, seg_coef=0.25, noise_loss_list=None, latent_path=None, latent_list_path=None):
 
@@ -265,7 +329,7 @@ class MfMOEPipeline(nn.Module):
 
 def preprocess_mask(mask_path, h, w, device):
     mask = np.array(Image.open(mask_path).convert("L"))
-    mask = mask.astype(np.float16) / 255.0
+    mask = mask.astype(np.float32) / 255.0
     mask = mask[None, None]
     mask[mask < 0.5] = 0
     mask[mask >= 0.5] = 1
@@ -275,6 +339,7 @@ def preprocess_mask(mask_path, h, w, device):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--image_path', type=str, required=True)
     parser.add_argument('--mask_paths', nargs='+')
     parser.add_argument('--rec_path', type=str)
     parser.add_argument('--edit_path', type=str)
@@ -283,7 +348,7 @@ if __name__ == '__main__':
     parser.add_argument('--bg_negative', type=str)
     parser.add_argument('--fg_prompts', nargs='+')
     parser.add_argument('--fg_negative', nargs='+')
-    parser.add_argument('--sd_version', type=str, default='2.0', choices=['1.4', '1.5', '2.0', 'ip'], help="stable diffusion version")
+    parser.add_argument('--sd_version', type=str, default='1.4', choices=['1.4', '1.5', '2.0', 'ip'], help="stable diffusion version")
     parser.add_argument('--H', type=int, default=512)
     parser.add_argument('--W', type=int, default=512)
     parser.add_argument('--seed', type=int, default=0)
@@ -297,7 +362,7 @@ if __name__ == '__main__':
 
     opt = parser.parse_args()
 
-    device = torch.device('cuda')
+    device = torch.device('cuda:0')
 
     ca_coef = opt.ca_coef
     seg_coef = opt.seg_coef
@@ -309,10 +374,33 @@ if __name__ == '__main__':
     seed_everything(seed)
 
     sd = MfMOEPipeline(device, opt.sd_version)
+    nti = NullInversion(sd)
 
     seed_everything(seed)
+    
+    # Initialize BLIP captioner
+    # print("Device: ", device)
+    model_blip, vis_processors, _ = load_model_and_preprocess(name="blip_caption", model_type="base_coco", is_eval=True, device=device)
+
+    # Set number of inversion steps
+    sd.scheduler.num_inference_steps = 50
+    img = Image.open(opt.image_path).resize((512,512), Image.Resampling.LANCZOS)
+    # generate the caption
+    _image = vis_processors["eval"](img).unsqueeze(0).to(device)
+    prompt_str = model_blip.generate({"image": _image})[0]
+    print(prompt_str)
+    
+    # Inversion
+    # (image_gt, image_enc), x_t, uncond_embeddings = nti.invert(opt.image_path, prompt_str, offsets=(0, 0, 0, 0), verbose=True)
+    # print("Latent shape: ", x_t.shape)    
+    
+    init_latent = torch.zeros((1, opt.H//8, opt.W//8)).to(device=device)
+    x_inv = sd.invert(init_latent.unsqueeze(0), prompt_str)
+    print(x_inv.shape)
 
     fg_masks = torch.zeros((1, opt.H//8, opt.W//8)) # generate a fixed size fg mask
+    
+    
     bg_mask = 1 - torch.sum(fg_masks, dim=0, keepdim=True)
     masks = torch.cat([bg_mask, fg_masks])
 

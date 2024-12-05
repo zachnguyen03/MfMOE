@@ -26,7 +26,7 @@ def img_to_latents(x: torch.Tensor, vae: AutoencoderKL):
 @torch.no_grad()
 def ddim_inversion(imgname: str, num_steps: int = 50, verify: Optional[bool] = False) -> torch.Tensor:
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    dtype = torch.float16
+    dtype = torch.float32
 
     inverse_scheduler = DDIMInverseScheduler.from_pretrained('stabilityai/stable-diffusion-2-1', subfolder='scheduler')
     pipe = StableDiffusionPipeline.from_pretrained('stabilityai/stable-diffusion-2-1',
