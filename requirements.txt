@@ -1,0 +1,9 @@
+diffusers==0.14.0
+transformers==4.26.1
+opencv-contrib-python==4.5.5.62
+einops
+salesforce-lavis==1.0.2
+timm==0.4.12
+thinc==8.2.5
+accelerate==0.20.3
+ipython

@@ -13,6 +13,7 @@ from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler
 from lavis.models import load_model_and_preprocess, load_model
 
 from utils.nti import NullInversion
+from ptp_utils import *
 
 logging.set_verbosity_error()
 
@@ -398,6 +399,9 @@ if __name__ == '__main__':
     # bg_mask = 1 - torch.sum(fg_masks, dim=0, keepdim=True)
     # masks = torch.cat([bg_mask, fg_masks])
     masks = None
+    
+    controller = AttentionStore()
+    # register_attention_control(sd, controller)
 
     prompts = [prompt_str]
     neg_prompts = [prompt_str]
@@ -417,7 +421,7 @@ if __name__ == '__main__':
     
     print("Prompts: ", prompts)
     print("Negative prompts: ", neg_prompts)
-    
+    # print("Scheduler timesteps: ", sd.scheduler.timesteps)
     start_gen = time.time()
 
     img = sd.generate(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, ca_coef=ca_coef, seg_coef=seg_coef, noise_loss_list=noise_loss_list, latent=x_t, latent_path=None, latent_list_path=None)
