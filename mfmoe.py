@@ -18,7 +18,7 @@ logging.set_verbosity_error()
 def seed_everything(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
-    torch.set_default_dtype(torch.float32)
+    torch.set_default_dtype(torch.float16)
 
 def get_views(panorama_height, panorama_width, window_size=64, stride=8):
     panorama_height /= 8
@@ -179,7 +179,7 @@ class MfMOEPipeline(nn.Module):
 
         mask_tensor = masks[0]
         mask_tensor = mask_tensor.squeeze(0)
-        mask_tensor = torch.Tensor(np.array([np.array(mask_tensor.cpu())] * 4)).to(device)
+        mask_tensor = torch.Tensor(np.array([np.array(mask_tensor.cpu())] * 4)).to(self.device)
         
         print("Masks size: ", mask_tensor.shape)
 
@@ -192,7 +192,6 @@ class MfMOEPipeline(nn.Module):
 
             masks_view = masks
             latent_view = latent.repeat(len(prompts), 1, 1, 1) # latents for all prompts
-            # print("Prompts: ", prompts) # [original prompt, edited prompt1,...,n]
             if i < bootstrapping:
                 bg = bootstrapping_backgrounds[torch.randint(0, bootstrapping, (len(prompts) - 1,))]
                 bg = self.scheduler.add_noise(bg, noise, t)
@@ -216,7 +215,7 @@ class MfMOEPipeline(nn.Module):
                 module_name = type(module).__name__
                 if module_name == "CrossAttention" and 'attn2' in name:
                     curr = module.attn_probs
-                    ref = self.d_ref_t2attn[t.item()][name].detach().to(device)
+                    ref = self.d_ref_t2attn[t.item()][name].detach().to(self.device)
                     loss_ca += ((curr-ref)**2).sum((1, 2)).mean(0)
 
             latents = x_in.chunk(2)[0]
@@ -233,7 +232,7 @@ class MfMOEPipeline(nn.Module):
             latent = torch.where(count > 0, latent / count, latent) # 00:57
 
             latent_cur = latent.squeeze(0)
-            latent_ref = self.image_latent_ref[t.item()].detach().to(device).squeeze(0)
+            latent_ref = self.image_latent_ref[t.item()].detach().to(self.device).squeeze(0)
 
             loss_seg += (torch.multiply(mask_tensor, latent_cur - latent_ref)**2).sum((1, 2)).mean(0)
 

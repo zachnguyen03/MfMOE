@@ -9,7 +9,7 @@ from PIL import Image
 from lavis.models import load_model_and_preprocess
 
 from utils.ddim_inv import DDIMInversion
-from utils.scheduler import DDIMInverseScheduler
+from diffusers import DDIMInverseScheduler
 
 if torch.cuda.is_available():
     device = "cuda"
@@ -33,7 +33,7 @@ if __name__=="__main__":
     if args.use_float_16:
         torch_dtype = torch.float16
     else:
-        torch_dtype = torch.float32
+        torch_dtype = torch.float16
 
 
     # load the BLIP model

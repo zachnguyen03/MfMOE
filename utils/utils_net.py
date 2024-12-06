@@ -116,6 +116,8 @@ def get_attention_scores(self, query, key, attention_mask=None):
         query = query.float()
         key = key.float()
 
+    # print("Query: ", query.shape)
+    # print("Key: ", key.shape)
     attention_scores = torch.baddbmm(
         torch.empty(query.shape[0], query.shape[1], key.shape[1], dtype=query.dtype, device=query.device),
         query,
@@ -140,8 +142,13 @@ class MyCrossAttnProcessor:
     def __call__(self, attn: CrossAttention, hidden_states, encoder_hidden_states=None, attention_mask=None):
         batch_size, sequence_length, _ = hidden_states.shape
         attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length)
+        # print("To q: ", attn.to_q)
+        # print("To k: ", attn.to_k)
 
         query = attn.to_q(hidden_states)
+        # if encoder_hidden_states is not None:
+        #     print("Hidden state: ", hidden_states.shape)
+        #     print("Encoder hidden state: ", encoder_hidden_states.shape)
 
         encoder_hidden_states = encoder_hidden_states if encoder_hidden_states is not None else hidden_states
         key = attn.to_k(encoder_hidden_states)
@@ -152,6 +159,9 @@ class MyCrossAttnProcessor:
         value = attn.head_to_batch_dim(value)
 
         attn.get_attention_scores = get_attention_scores.__get__(attn, type(attn))
+        # print("Query: ", query.shape)
+        # print("Key: ", key.shape)
+        # print("Attention mask: ", attention_mask.shape)
         attention_probs = attn.get_attention_scores(query, key, attention_mask)
         # new bookkeeping to save the attn probs
         attn.attn_probs = attention_probs

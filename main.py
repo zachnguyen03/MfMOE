@@ -1,4 +1,5 @@
 from utils.utils_net import prep_unet, AttentionStore
+import time
 from tqdm import tqdm
 from PIL import Image
 import numpy as np
@@ -8,7 +9,7 @@ import torch.nn as nn
 import torch
 from transformers import CLIPTextModel, CLIPTokenizer, logging
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler
-from ddim_inv import ddim_inversion
+# from ddim_inv import ddim_inversion
 from lavis.models import load_model_and_preprocess, load_model
 
 from utils.nti import NullInversion
@@ -18,7 +19,8 @@ logging.set_verbosity_error()
 def seed_everything(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
-    torch.set_default_dtype(torch.float32)
+    torch.set_default_dtype(torch.float16)
+
 
 def get_views(panorama_height, panorama_width, window_size=64, stride=8):
     panorama_height /= 8
@@ -109,14 +111,14 @@ class MfMOEPipeline(nn.Module):
         return imgs
 
     @torch.no_grad()
-    def reconstruct(self, masks, prompts, negative_prompts='', height=512, width=2048, num_inference_steps=50, guidance_scale=7.5, bootstrapping=20, latent_path=None, latent_list_path=None, num_fgmasks=2):
+    def reconstruct(self, masks, prompts, negative_prompts='', height=512, width=2048, num_inference_steps=50, guidance_scale=7.5, bootstrapping=20, latent=None, latent_path=None, latent_list_path=None, num_fgmasks=2):
 
         bootstrapping_backgrounds = self.get_random_background(bootstrapping)
 
         text_embeds = self.get_text_embeds(prompts, negative_prompts).type(torch.cuda.HalfTensor)
 
-        latent = torch.load(latent_path).unsqueeze(0).to(self.device)
-        latent_list = [x.to(self.device) for x in torch.load(latent_list_path)]
+        # latent = torch.load(latent_path).unsqueeze(0).to(self.device)
+        # latent_list = [x.to(self.device) for x in torch.load(latent_list_path)]
 
         noise = latent.clone().repeat(len(prompts) - 1, 1, 1, 1)
         views = get_views(height, width)
@@ -150,9 +152,9 @@ class MfMOEPipeline(nn.Module):
                 noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                 latents_view_denoised = self.scheduler.step(noise_pred, t, latent_view)['prev_sample']
-                if latent_list is not None:
-                    noise_loss_list.append(latent_list[-2-i] - latents_view_denoised)
-                    latents_view_denoised = latents_view_denoised + noise_loss_list[-1]
+                # if latent_list is not None:
+                #     noise_loss_list.append(latent_list[-2-i] - latents_view_denoised)
+                #     latents_view_denoised = latents_view_denoised + noise_loss_list[-1]
 
             latent = latents_view_denoised
             self.image_latent_ref[t.item()] = latent.detach().cpu()
@@ -161,7 +163,6 @@ class MfMOEPipeline(nn.Module):
         img = T.ToPILImage()(imgs[0].cpu())
         return img, noise_loss_list
     
-    #TODO
     def invert(
         self,
         start_latents,
@@ -223,14 +224,14 @@ class MfMOEPipeline(nn.Module):
 
         return torch.cat(intermediate_latents)
 
-    def generate(self, masks, prompts, negative_prompts='', height=512, width=2048, num_inference_steps=50, guidance_scale=7.5, bootstrapping=20, ca_coef=1, seg_coef=0.25, noise_loss_list=None, latent_path=None, latent_list_path=None):
+    def generate(self, masks, prompts, negative_prompts='', height=512, width=2048, num_inference_steps=50, guidance_scale=7.5, bootstrapping=20, ca_coef=1, seg_coef=0.25, noise_loss_list=None, latent=None, latent_path=None, latent_list_path=None):
 
         bootstrapping_backgrounds = self.get_random_background(bootstrapping)
 
         text_embeds = self.get_text_embeds(prompts, negative_prompts).type(torch.cuda.HalfTensor)
 
-        latent = torch.load(latent_path).unsqueeze(0).to(self.device)
-        latent_list = [x.to(self.device) for x in torch.load(latent_list_path)]
+        # latent = torch.load(latent_path).unsqueeze(0).to(self.device)
+        # latent_list = [x.to(self.device) for x in torch.load(latent_list_path)]
 
         noise = latent.clone().repeat(len(prompts) - 1, 1, 1, 1)
         views = get_views(height, width)
@@ -266,8 +267,6 @@ class MfMOEPipeline(nn.Module):
 
             x_in = latent_model_input.detach().clone()
             x_in.requires_grad = True
-            
-            print("Input to UNet shape: ", x_in.shape)
 
             opt = torch.optim.SGD([x_in], lr=0.1)
 
@@ -276,12 +275,12 @@ class MfMOEPipeline(nn.Module):
             loss = 0.0
             loss_ca = 0.0
             loss_seg = 0.0
-            for name, module in self.unet.named_modules():
-                module_name = type(module).__name__
-                if module_name == "CrossAttention" and 'attn2' in name:
-                    curr = module.attn_probs
-                    ref = self.d_ref_t2attn[t.item()][name].detach().to(device)
-                    loss_ca += ((curr-ref)**2).sum((1, 2)).mean(0)
+            # for name, module in self.unet.named_modules():
+            #     module_name = type(module).__name__
+            #     if module_name == "CrossAttention" and 'attn2' in name:
+            #         curr = module.attn_probs
+            #         ref = self.d_ref_t2attn[t.item()][name].detach().to(device)
+            #         loss_ca += ((curr-ref)**2).sum((1, 2)).mean(0)
 
             latents = x_in.chunk(2)[0]
 
@@ -289,8 +288,8 @@ class MfMOEPipeline(nn.Module):
             noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
             latents_view_denoised = self.scheduler.step(noise_pred, t, latents)['prev_sample']
-            if noise_loss_list is not None:
-                latents_view_denoised=latents_view_denoised+noise_loss_list[i]
+            # if noise_loss_list is not None:
+            #     latents_view_denoised=latents_view_denoised+noise_loss_list[i]
 
             latent = (latents_view_denoised * masks_view).sum(dim=0, keepdims=True)
             count = masks_view.sum(dim=0, keepdims=True) # 00:57
@@ -315,8 +314,8 @@ class MfMOEPipeline(nn.Module):
             noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
             latents_view_denoised = self.scheduler.step(noise_pred, t, latents)['prev_sample']
-            if noise_loss_list is not None:
-                latents_view_denoised=latents_view_denoised+noise_loss_list[i]
+            # if noise_loss_list is not None:
+            #     latents_view_denoised=latents_view_denoised+noise_loss_list[i]
 
             latent = (latents_view_denoised * masks_view).sum(dim=0, keepdims=True)
             count = masks_view.sum(dim=0, keepdims=True)
@@ -329,7 +328,7 @@ class MfMOEPipeline(nn.Module):
 
 def preprocess_mask(mask_path, h, w, device):
     mask = np.array(Image.open(mask_path).convert("L"))
-    mask = mask.astype(np.float32) / 255.0
+    mask = mask.astype(np.float16) / 255.0
     mask = mask[None, None]
     mask[mask < 0.5] = 0
     mask[mask >= 0.5] = 1
@@ -348,7 +347,7 @@ if __name__ == '__main__':
     parser.add_argument('--bg_negative', type=str)
     parser.add_argument('--fg_prompts', nargs='+')
     parser.add_argument('--fg_negative', nargs='+')
-    parser.add_argument('--sd_version', type=str, default='1.4', choices=['1.4', '1.5', '2.0', 'ip'], help="stable diffusion version")
+    parser.add_argument('--sd_version', type=str, default='2.0', choices=['1.4', '1.5', '2.0', 'ip'], help="stable diffusion version")
     parser.add_argument('--H', type=int, default=512)
     parser.add_argument('--W', type=int, default=512)
     parser.add_argument('--seed', type=int, default=0)
@@ -363,6 +362,21 @@ if __name__ == '__main__':
     opt = parser.parse_args()
 
     device = torch.device('cuda:0')
+    
+    torch.set_default_dtype(torch.float32)
+    start = time.time()
+    # Initialize BLIP captioner
+    model_blip, vis_processors, _ = load_model_and_preprocess(name="blip_caption", model_type="base_coco", is_eval=True, device=device)
+
+
+    img = Image.open(opt.image_path).resize((512,512), Image.Resampling.LANCZOS)
+    # generate the caption
+    _image = vis_processors["eval"](img).unsqueeze(0).to(device)
+    prompt_str = model_blip.generate({"image": _image})[0]
+    print("Generated source prompt: ", prompt_str)
+    
+    del model_blip
+    del vis_processors
 
     ca_coef = opt.ca_coef
     seg_coef = opt.seg_coef
@@ -370,55 +384,49 @@ if __name__ == '__main__':
     print(ca_coef, seg_coef)
 
     seed = opt.seed
-
     seed_everything(seed)
 
     sd = MfMOEPipeline(device, opt.sd_version)
     nti = NullInversion(sd)
 
-    seed_everything(seed)
-    
-    # Initialize BLIP captioner
-    # print("Device: ", device)
-    model_blip, vis_processors, _ = load_model_and_preprocess(name="blip_caption", model_type="base_coco", is_eval=True, device=device)
-
     # Set number of inversion steps
     sd.scheduler.num_inference_steps = 50
-    img = Image.open(opt.image_path).resize((512,512), Image.Resampling.LANCZOS)
-    # generate the caption
-    _image = vis_processors["eval"](img).unsqueeze(0).to(device)
-    prompt_str = model_blip.generate({"image": _image})[0]
-    print(prompt_str)
     
     # Inversion
-    # (image_gt, image_enc), x_t, uncond_embeddings = nti.invert(opt.image_path, prompt_str, offsets=(0, 0, 0, 0), verbose=True)
-    # print("Latent shape: ", x_t.shape)    
+    (image_gt, image_enc), x_t, uncond_embeddings = nti.invert(opt.image_path, prompt_str, offsets=(0, 0, 0, 0), verbose=True)
+    print("Latent shape: ", x_t.shape)    
     
-    init_latent = torch.zeros((1, opt.H//8, opt.W//8)).to(device=device)
-    x_inv = sd.invert(init_latent.unsqueeze(0), prompt_str)
-    print(x_inv.shape)
-
-    fg_masks = torch.zeros((1, opt.H//8, opt.W//8)) # generate a fixed size fg mask
+    del nti
     
-    
-    bg_mask = 1 - torch.sum(fg_masks, dim=0, keepdim=True)
-    masks = torch.cat([bg_mask, fg_masks])
+    # fg_masks = torch.zeros((1, opt.H//8, opt.W//8)) # generate a fixed size fg mask
+    # bg_mask = 1 - torch.sum(fg_masks, dim=0, keepdim=True)
+    # masks = torch.cat([bg_mask, fg_masks])
+    masks = None
 
-    prompts = [open(opt.bg_prompt).read().strip()]
-    neg_prompts = [open(opt.bg_negative).read().strip()]
+    prompts = [prompt_str]
+    neg_prompts = [prompt_str]
 
-    rec_img, noise_loss_list = sd.reconstruct(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, latent_path=opt.latent, latent_list_path=opt.latent_list, num_fgmasks=opt.num_fgmasks+1)
+    rec_img, noise_loss_list = sd.reconstruct(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, latent=x_t, latent_path=opt.latent, latent_list_path=opt.latent_list, num_fgmasks=opt.num_fgmasks+1)
     rec_img.save(opt.rec_path)
+    
+    # print("Saved attention maps: ", sd.d_ref_t2attn[981].keys())
 
     fg_masks = torch.cat([preprocess_mask(mask_path, opt.H // 8, opt.W // 8, device) for mask_path in opt.mask_paths])
     bg_mask = 1 - torch.sum(fg_masks, dim=0, keepdim=True)
     bg_mask[bg_mask < 0] = 0
     masks = torch.cat([bg_mask, fg_masks])
 
-    prompts = [open(opt.bg_prompt).read().strip()] + opt.fg_prompts
-    neg_prompts = [open(opt.bg_negative).read().strip()] + opt.fg_negative
+    prompts = [prompt_str] + opt.fg_prompts
+    neg_prompts = [prompt_str] + opt.fg_negative
+    
+    print("Prompts: ", prompts)
+    print("Negative prompts: ", neg_prompts)
+    
+    start_gen = time.time()
 
-    img = sd.generate(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, ca_coef=ca_coef, seg_coef=seg_coef, noise_loss_list=noise_loss_list, latent_path=opt.latent, latent_list_path=opt.latent_list)
+    img = sd.generate(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, ca_coef=ca_coef, seg_coef=seg_coef, noise_loss_list=noise_loss_list, latent=x_t, latent_path=opt.latent, latent_list_path=opt.latent_list)
+
+    end = time.time()
 
     img.save(opt.edit_path) 
 
@@ -437,3 +445,6 @@ if __name__ == '__main__':
 
     if opt.save_path:
         new_im.save(opt.save_path)
+        
+    print(f"Total inference time: {end - start} seconds")
+    print(f"Editing time: {end - start_gen} seconds")

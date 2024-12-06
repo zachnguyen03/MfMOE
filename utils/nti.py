@@ -44,7 +44,7 @@ def load_512(image_path, left=0, right=0, top=0, bottom=0):
 
 class NullInversion:
     
-    def prev_step(self, model_output: Union[torch.FloatTensor, np.ndarray], timestep: int, sample: Union[torch.FloatTensor, np.ndarray]):
+    def prev_step(self, model_output: Union[torch.HalfTensor, np.ndarray], timestep: int, sample: Union[torch.HalfTensor, np.ndarray]):
         prev_timestep = timestep - self.scheduler.config.num_train_timesteps // self.scheduler.num_inference_steps
         alpha_prod_t = self.scheduler.alphas_cumprod[timestep]
         alpha_prod_t_prev = self.scheduler.alphas_cumprod[prev_timestep] if prev_timestep >= 0 else self.scheduler.final_alpha_cumprod
@@ -54,7 +54,7 @@ class NullInversion:
         prev_sample = alpha_prod_t_prev ** 0.5 * pred_original_sample + pred_sample_direction
         return prev_sample
     
-    def next_step(self, model_output: Union[torch.FloatTensor, np.ndarray], timestep: int, sample: Union[torch.FloatTensor, np.ndarray]):
+    def next_step(self, model_output: Union[torch.HalfTensor, np.ndarray], timestep: int, sample: Union[torch.HalfTensor, np.ndarray]):
         timestep, next_timestep = min(timestep - self.scheduler.config.num_train_timesteps // self.scheduler.num_inference_steps, 999), timestep
         alpha_prod_t = self.scheduler.alphas_cumprod[timestep] if timestep >= 0 else self.scheduler.final_alpha_cumprod
         alpha_prod_t_next = self.scheduler.alphas_cumprod[next_timestep]
@@ -101,7 +101,7 @@ class NullInversion:
                 latents = image
             else:
                 image = torch.from_numpy(image).float() / 127.5 - 1
-                image = image.permute(2, 0, 1).unsqueeze(0).to(device)
+                image = image.permute(2, 0, 1).unsqueeze(0).to(device).to(dtype=torch.float16)
                 print("Image dtype: ", image.dtype)
                 print("Model dtype: ", self.model.vae.dtype)
                 latents = self.model.vae.encode(image)['latent_dist'].mean
