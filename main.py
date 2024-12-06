@@ -275,12 +275,12 @@ class MfMOEPipeline(nn.Module):
             loss = 0.0
             loss_ca = 0.0
             loss_seg = 0.0
-            # for name, module in self.unet.named_modules():
-            #     module_name = type(module).__name__
-            #     if module_name == "CrossAttention" and 'attn2' in name:
-            #         curr = module.attn_probs
-            #         ref = self.d_ref_t2attn[t.item()][name].detach().to(device)
-            #         loss_ca += ((curr-ref)**2).sum((1, 2)).mean(0)
+            for name, module in self.unet.named_modules():
+                module_name = type(module).__name__
+                if module_name == "CrossAttention" and 'attn2' in name:
+                    curr = module.attn_probs
+                    ref = self.d_ref_t2attn[t.item()][name].detach().to(device)
+                    loss_ca += ((curr-ref)**2).sum((1, 2)).mean(0)
 
             latents = x_in.chunk(2)[0]
 
@@ -343,8 +343,6 @@ if __name__ == '__main__':
     parser.add_argument('--rec_path', type=str)
     parser.add_argument('--edit_path', type=str)
     parser.add_argument('--save_path', type=str)
-    parser.add_argument('--bg_prompt', type=str)
-    parser.add_argument('--bg_negative', type=str)
     parser.add_argument('--fg_prompts', nargs='+')
     parser.add_argument('--fg_negative', nargs='+')
     parser.add_argument('--sd_version', type=str, default='2.0', choices=['1.4', '1.5', '2.0', 'ip'], help="stable diffusion version")
@@ -354,8 +352,6 @@ if __name__ == '__main__':
     parser.add_argument('--steps', type=int, default=50)
     parser.add_argument('--bootstrapping', type=int, default=20)
     parser.add_argument('--num_fgmasks', type=int, default=1)
-    parser.add_argument('--latent', type=str)
-    parser.add_argument('--latent_list', type=str)
     parser.add_argument('--ca_coef', type=float, default=1.0)
     parser.add_argument('--seg_coef', type=float, default=1.75)
 
@@ -406,7 +402,7 @@ if __name__ == '__main__':
     prompts = [prompt_str]
     neg_prompts = [prompt_str]
 
-    rec_img, noise_loss_list = sd.reconstruct(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, latent=x_t, latent_path=opt.latent, latent_list_path=opt.latent_list, num_fgmasks=opt.num_fgmasks+1)
+    rec_img, noise_loss_list = sd.reconstruct(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, latent=x_t, latent_path=None, latent_list_path=None, num_fgmasks=opt.num_fgmasks+1)
     rec_img.save(opt.rec_path)
     
     # print("Saved attention maps: ", sd.d_ref_t2attn[981].keys())
@@ -424,7 +420,7 @@ if __name__ == '__main__':
     
     start_gen = time.time()
 
-    img = sd.generate(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, ca_coef=ca_coef, seg_coef=seg_coef, noise_loss_list=noise_loss_list, latent=x_t, latent_path=opt.latent, latent_list_path=opt.latent_list)
+    img = sd.generate(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, ca_coef=ca_coef, seg_coef=seg_coef, noise_loss_list=noise_loss_list, latent=x_t, latent_path=None, latent_list_path=None)
 
     end = time.time()
 
