@@ -14,6 +14,8 @@ from typing import Optional, Union, Tuple, List, Callable, Dict
 from torchvision.utils import save_image
 from einops import rearrange, repeat
 
+from ptp_utils import view_images
+
 class AttentionBase:
     def __init__(self):
         self.cur_step = 0
