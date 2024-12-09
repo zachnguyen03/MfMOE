@@ -7,4 +7,3 @@ salesforce-lavis==1.0.2
 timm==0.4.12
 thinc==8.2.5
 accelerate==0.20.3
-ipython

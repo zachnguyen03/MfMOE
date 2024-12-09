@@ -37,7 +37,7 @@ The following installation suppose `python=3.9` `pytorch=2.0.1` and `cuda>=11.7`
     --sd_version 2.0 \
     --image_path <insert path to source image> \
     --mask_paths <insert paths to masks> \
-    --fg_negative "artifacts, blurry, smooth texture, bad quality, distortions, unrealistic, distorted image" "artifacts, blurry, smooth texture, bad quality, distortions, unrealistic, distorted image" \
+    --fg_negative <insert negative prompts> \
     --H 512 \
     --W 512 \
     --bootstrapping <insert number of bootstrapping steps> \
