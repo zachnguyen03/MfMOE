@@ -141,7 +141,7 @@ def get_attention_scores(self, query, key, attention_mask=None):
 class MyCrossAttnProcessor:
     def __call__(self, attn: CrossAttention, hidden_states, encoder_hidden_states=None, attention_mask=None):
         batch_size, sequence_length, _ = hidden_states.shape
-        attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length)
+        attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size=1)
         # print("To q: ", attn.to_q)
         # print("To k: ", attn.to_k)
 
