@@ -102,8 +102,6 @@ class NullInversion:
             else:
                 image = torch.from_numpy(image).float() / 127.5 - 1
                 image = image.permute(2, 0, 1).unsqueeze(0).to(device).to(dtype=torch.float16)
-                print("Image dtype: ", image.dtype)
-                print("Model dtype: ", self.model.vae.dtype)
                 latents = self.model.vae.encode(image)['latent_dist'].mean
                 latents = latents * 0.18215
         return latents

@@ -8,13 +8,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
 from math import ceil
+import cv2
 
 from typing import Optional, Union, Tuple, List, Callable, Dict
 
 from torchvision.utils import save_image
 from einops import rearrange, repeat
 
-from ptp_utils import view_images
+from utils.ptp_utils import view_images
 
 class AttentionBase:
     def __init__(self):
@@ -54,28 +55,34 @@ class AttentionStore(AttentionBase):
         self.min_step = min_step
         self.max_step = max_step
         self.valid_steps = 0
-        # self.cross_attns = []
-        # self.cross_attns_step = []
+
+        self.self_attns = []  # store the all attns
+        self.cross_attns = []
+
+        self.self_attns_step = []  # store the attns in each step
+        self.cross_attns_step = []
 
     def after_step(self):
         if self.cur_step > self.min_step and self.cur_step < self.max_step:
             self.valid_steps += 1
-            if len(self.cross_attns) == 0:
+            if len(self.self_attns) == 0:
+                self.self_attns = self.self_attns_step
                 self.cross_attns = self.cross_attns_step
             else:
-                for i in range(len(self.cross_attns)):
+                for i in range(len(self.self_attns)):
+                    self.self_attns[i] += self.self_attns_step[i]
                     self.cross_attns[i] += self.cross_attns_step[i]
-        self.cross_attns_step = []
+        self.self_attns_step.clear()
+        self.cross_attns_step.clear()
 
     def forward(self, q, k, v, sim, attn, is_cross, place_in_unet, num_heads, **kwargs):
         if attn.shape[1] <= 16 ** 2:  # avoid OOM
             if is_cross:
                 self.cross_attns_step.append(attn)
+            else:
+                self.self_attns_step.append(attn)
         return super().forward(q, k, v, sim, attn, is_cross, place_in_unet, num_heads, **kwargs)
-    
-    def get_average_attention(self):
-        average_attention = {'up_cross': [item / self.cur_step for item in self.cross_attns]}
-        return average_attention
+
 
 def aggregate_attention(attention_store: AttentionStore, prompts, res_h: int, res_w:int, from_where: List[str], is_cross: bool, select: int):
     out = []
@@ -112,6 +119,38 @@ def show_all_cross_attention(attention_store: AttentionStore,
         images.append(image)
     view_images(np.stack(images, axis=0), img_path=save_path+"/crossattn.png")
 
+
+def get_token_cross_attention(attention_store: Dict, 
+                             prompts: List[str], 
+                             tokenizer = None,
+                             timestep = None,
+                             block = None,
+                             original_resolution=(512, 512),
+                             token_idx=None):
+    tokens = tokenizer.encode(prompts[0])[token_idx]
+    print(tokens)
+    res_h, res_w = ceil(original_resolution[0]/32), ceil(original_resolution[1]/32)
+    image = attention_store[timestep][block][token_idx]
+    print("Single amp shape: ", image.shape)
+    image = image.reshape(-1, res_h, res_w)
+    image = image[token_idx]
+    image = 255 * image / image.max()
+    print("Image shape map: ", image.shape)
+    image = image.unsqueeze(-1).expand(*image.shape, 3)
+    print("Image shape after unsqueeze: ", image.shape)
+    image = image.numpy().astype(np.uint8)
+    image = np.array(Image.fromarray(image).resize((original_resolution[1], original_resolution[0])))
+
+    new_image = cv2.convertScaleAbs(image, alpha=2, beta=0)
+    thres = 92
+    new_image[new_image<=thres] = 0
+    new_image[new_image>thres] = 255
+    
+    
+    new_image = cv2.bitwise_not(new_image)
+    return new_image
+
+
 def get_attention_scores(self, query, key, attention_mask=None):
     dtype = query.dtype
     if self.upcast_attention:
@@ -142,6 +181,7 @@ def get_attention_scores(self, query, key, attention_mask=None):
 
 class MyCrossAttnProcessor:
     def __call__(self, attn: CrossAttention, hidden_states, encoder_hidden_states=None, attention_mask=None):
+        # print("Using MyCrossAttnProcessor")
         batch_size, sequence_length, _ = hidden_states.shape
         attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size=1)
         # print("To q: ", attn.to_q)
@@ -184,7 +224,93 @@ class MyCrossAttnProcessor:
             attn.hs = hidden_states[1:2]
 
         return hidden_states
+    
 
+def register_attention_control(model, controller):
+    def ca_forward(attn, place_in_unet):
+        to_out = attn.to_out
+        if type(to_out) is torch.nn.modules.container.ModuleList:
+            to_out = attn.to_out[0]
+        else:
+            to_out = attn.to_out
+
+        def forward(x, encoder_hidden_states=None, attention_mask=None, context=None, mask=None):
+            """
+            The attention is similar to the original implementation of LDM CrossAttention class
+            except adding some modifications on the attention
+            """
+            if encoder_hidden_states is not None:
+                context = encoder_hidden_states
+            if attention_mask is not None:
+                mask = attention_mask
+
+            to_out = attn.to_out
+            if isinstance(to_out, nn.modules.container.ModuleList):
+                to_out = attn.to_out[0]
+            else:
+                to_out = attn.to_out
+
+            h = attn.heads
+            q = attn.to_q(x)
+            is_cross = context is not None
+            context = context if is_cross else x
+            k = attn.to_k(context)
+            v = attn.to_v(context)
+            q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
+
+            sim = torch.einsum('b i d, b j d -> b i j', q, k) * attn.scale
+
+            if mask is not None:
+                mask = rearrange(mask, 'b ... -> b (...)')
+                max_neg_value = -torch.finfo(sim.dtype).max
+                mask = repeat(mask, 'b j -> (b h) () j', h=h)
+                mask = mask[:, None, :].repeat(h, 1, 1)
+                sim.masked_fill_(~mask, max_neg_value)
+
+            attn = sim.softmax(dim=-1)
+            # the only difference
+            out = controller(
+                q, k, v, sim, attn, is_cross, place_in_unet,
+                attn.heads, scale=attn.scale)
+
+            return to_out(out)
+
+        return forward
+
+    class DummyController:
+
+        def __call__(self, *args):
+            return args[0]
+
+        def __init__(self):
+            self.num_att_layers = 0
+
+    if controller is None:
+        controller = DummyController()
+
+    def register_recr(net_, count, place_in_unet):
+        # if net_.__class__.__name__ == 'CrossAttention':
+        #     net_.forward = ca_forward(net_, place_in_unet)
+        #     return count + 1
+        # elif hasattr(net_, 'children'):
+        #     for net__ in net_.children():
+        #         count = register_recr(net__, count, place_in_unet)
+        # return count
+        net_.forward = ca_forward(net_, place_in_unet)
+        return count + 1
+
+    cross_att_count = 0
+    for name, module in model.unet.named_modules():        
+    # sub_nets = model.unet.named_children()
+    # for net in sub_nets:
+        if "down" in name:
+            cross_att_count += register_recr(module, 0, "down")
+        elif "up" in name:
+            cross_att_count += register_recr(module, 0, "up")
+        elif "mid" in name:
+            cross_att_count += register_recr(module, 0, "mid")
+
+    controller.num_att_layers = cross_att_count
 
 """
 A function that prepares a U-Net model for training by enabling gradient computation 

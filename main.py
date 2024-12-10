@@ -1,4 +1,4 @@
-from utils.utils_net import prep_unet, AttentionStore
+from utils.utils_net import prep_unet, AttentionStore, register_attention_control, get_token_cross_attention
 import time
 from tqdm import tqdm
 from PIL import Image
@@ -13,7 +13,8 @@ from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler
 from lavis.models import load_model_and_preprocess, load_model
 
 from utils.nti import NullInversion
-from ptp_utils import *
+from utils.ptp_utils import *
+from utils.utils_mask import attention_to_binary_mask
 
 logging.set_verbosity_error()
 
@@ -160,6 +161,10 @@ class MfMOEPipeline(nn.Module):
             latent = latents_view_denoised
             self.image_latent_ref[t.item()] = latent.detach().cpu()
 
+        print("Att map: ", self.d_ref_t2attn[21]['down_blocks.2.attentions.1.transformer_blocks.0.attn2'])
+        print("Att map shape: ", self.d_ref_t2attn[21]['down_blocks.2.attentions.1.transformer_blocks.0.attn2'].shape)
+        binary_mask = get_token_cross_attention(self.d_ref_t2attn, prompts, self.tokenizer, timestep=21, block='down_blocks.2.attentions.1.transformer_blocks.0.attn2', token_idx=2)
+        cv2.imwrite('./results/mask.png', binary_mask)
         imgs = self.decode_latents(latent.type(torch.cuda.HalfTensor))
         img = T.ToPILImage()(imgs[0].cpu())
         return img, noise_loss_list
@@ -228,9 +233,10 @@ class MfMOEPipeline(nn.Module):
     def generate(self, masks, prompts, negative_prompts='', height=512, width=2048, num_inference_steps=50, guidance_scale=7.5, bootstrapping=20, ca_coef=1, seg_coef=0.25, noise_loss_list=None, latent=None, latent_path=None, latent_list_path=None):
 
         bootstrapping_backgrounds = self.get_random_background(bootstrapping)
+        print("Bootstrap background shape: ", bootstrapping_backgrounds.shape)
 
         text_embeds = self.get_text_embeds(prompts, negative_prompts).type(torch.cuda.HalfTensor)
-
+        print("Text embeds shape: ", text_embeds.shape)
         # latent = torch.load(latent_path).unsqueeze(0).to(self.device)
         # latent_list = [x.to(self.device) for x in torch.load(latent_list_path)]
 
@@ -247,7 +253,6 @@ class MfMOEPipeline(nn.Module):
         mask_tensor = mask_tensor.squeeze(0)
         mask_tensor = torch.Tensor(np.array([np.array(mask_tensor.cpu())] * 4)).to(device)
         
-        print("Masks size: ", mask_tensor.shape)
 
         self.scheduler.set_timesteps(num_inference_steps)
 
@@ -263,6 +268,7 @@ class MfMOEPipeline(nn.Module):
                 bg = bootstrapping_backgrounds[torch.randint(0, bootstrapping, (len(prompts) - 1,))]
                 bg = self.scheduler.add_noise(bg, noise, t)
                 latent_view[1:] = latent_view[1:] * masks_view[1:] + bg * (1 - masks_view[1:])
+                # print("Latent view: ", latent_view[1:].shape)
 
             latent_model_input = torch.cat([latent_view] * 2).type(torch.cuda.HalfTensor)
 
@@ -385,7 +391,7 @@ if __name__ == '__main__':
 
     sd = MfMOEPipeline(device, opt.sd_version)
     nti = NullInversion(sd)
-
+    
     # Set number of inversion steps
     sd.scheduler.num_inference_steps = 50
     
@@ -400,7 +406,7 @@ if __name__ == '__main__':
     # masks = torch.cat([bg_mask, fg_masks])
     masks = None
     
-    controller = AttentionStore()
+    # controller = AttentionStore()
     # register_attention_control(sd, controller)
 
     prompts = [prompt_str]
@@ -448,3 +454,6 @@ if __name__ == '__main__':
         
     print(f"Total inference time: {end - start} seconds")
     print(f"Editing time: {end - start_gen} seconds")
+
+
+# 120x256x77 (att map 16x16)
