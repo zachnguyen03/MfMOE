@@ -130,24 +130,28 @@ def get_token_cross_attention(attention_store: Dict,
     tokens = tokenizer.encode(prompts[0])[token_idx]
     print(tokens)
     res_h, res_w = ceil(original_resolution[0]/32), ceil(original_resolution[1]/32)
-    image = attention_store[timestep][block][token_idx]
+    att_map = attention_store[timestep][block]
+    image = att_map.reshape(1, -1, res_h, res_w, att_map.shape[-1])[0]
+    image = image.sum(0) / image.shape[0]
+    print("Extracted att map shape: ", image.shape)
+    # image = attention_store[timestep][block][token_idx]
     print("Single amp shape: ", image.shape)
-    image = image.reshape(-1, res_h, res_w)
-    image = image[token_idx]
+    # image = image.reshape(-1, res_h, res_w)
+    image = image[:, :, token_idx]
     image = 255 * image / image.max()
     print("Image shape map: ", image.shape)
     image = image.unsqueeze(-1).expand(*image.shape, 3)
     print("Image shape after unsqueeze: ", image.shape)
     image = image.numpy().astype(np.uint8)
     image = np.array(Image.fromarray(image).resize((original_resolution[1], original_resolution[0])))
-
-    new_image = cv2.convertScaleAbs(image, alpha=2, beta=0)
-    thres = 92
+    print(image)
+    new_image = cv2.convertScaleAbs(image, alpha=1, beta=0)
+    thres = 127
     new_image[new_image<=thres] = 0
     new_image[new_image>thres] = 255
     
     
-    new_image = cv2.bitwise_not(new_image)
+    # new_image = cv2.bitwise_not(new_image)
     return new_image
 
 

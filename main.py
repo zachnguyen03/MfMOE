@@ -147,8 +147,9 @@ class MfMOEPipeline(nn.Module):
                     module_name = type(module).__name__
                     if module_name == "CrossAttention" and 'attn2' in name:
                         attn_mask = module.attn_probs
-                        attn_mask = torch.cat(tuple([attn_mask] * num_fgmasks), dim=0)
-                        self.d_ref_t2attn[t.item()][name] = attn_mask.detach().cpu()
+                        if attn_mask.shape[1] == 16 * 16: #save only 16x16 maps
+                            attn_mask = torch.cat(tuple([attn_mask] * num_fgmasks), dim=0)
+                            self.d_ref_t2attn[t.item()][name] = attn_mask.detach().cpu()
 
                 noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
                 noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
@@ -161,9 +162,11 @@ class MfMOEPipeline(nn.Module):
             latent = latents_view_denoised
             self.image_latent_ref[t.item()] = latent.detach().cpu()
 
-        print("Att map: ", self.d_ref_t2attn[21]['down_blocks.2.attentions.1.transformer_blocks.0.attn2'])
-        print("Att map shape: ", self.d_ref_t2attn[21]['down_blocks.2.attentions.1.transformer_blocks.0.attn2'].shape)
-        binary_mask = get_token_cross_attention(self.d_ref_t2attn, prompts, self.tokenizer, timestep=21, block='down_blocks.2.attentions.1.transformer_blocks.0.attn2', token_idx=2)
+        for key in self.d_ref_t2attn.keys():
+            print(self.d_ref_t2attn[key].keys())
+        print("Att map: ", self.d_ref_t2attn[21]['up_blocks.1.attentions.2.transformer_blocks.0.attn2'])
+        print("Att map shape: ", self.d_ref_t2attn[21]['up_blocks.1.attentions.2.transformer_blocks.0.attn2'].shape)
+        binary_mask = get_token_cross_attention(self.d_ref_t2attn, prompts, self.tokenizer, timestep=21, block='up_blocks.1.attentions.2.transformer_blocks.0.attn2', token_idx=2)
         cv2.imwrite('./results/mask.png', binary_mask)
         imgs = self.decode_latents(latent.type(torch.cuda.HalfTensor))
         img = T.ToPILImage()(imgs[0].cpu())
@@ -175,7 +178,6 @@ class MfMOEPipeline(nn.Module):
         prompt,
         guidance_scale=3.5,
         num_inference_steps=80,
-        num_images_per_prompt=1,
         do_classifier_free_guidance=True,
         negative_prompt="",
         ):
@@ -282,12 +284,12 @@ class MfMOEPipeline(nn.Module):
             loss = 0.0
             loss_ca = 0.0
             loss_seg = 0.0
-            for name, module in self.unet.named_modules():
-                module_name = type(module).__name__
-                if module_name == "CrossAttention" and 'attn2' in name:
-                    curr = module.attn_probs
-                    ref = self.d_ref_t2attn[t.item()][name].detach().to(device)
-                    loss_ca += ((curr-ref)**2).sum((1, 2)).mean(0)
+            # for name, module in self.unet.named_modules():
+            #     module_name = type(module).__name__
+            #     if module_name == "CrossAttention" and 'attn2' in name:
+            #         curr = module.attn_probs
+            #         ref = self.d_ref_t2attn[t.item()][name].detach().to(device)
+            #         loss_ca += ((curr-ref)**2).sum((1, 2)).mean(0)
 
             latents = x_in.chunk(2)[0]
 
