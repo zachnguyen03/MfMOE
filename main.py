@@ -14,7 +14,7 @@ from lavis.models import load_model_and_preprocess, load_model
 
 from utils.nti import NullInversion
 from utils.ptp_utils import *
-from utils.utils_mask import attention_to_binary_mask, postprocess_mask, gaussian_map
+from utils.utils_mask import preprocess_mask, attention_to_binary_mask, postprocess_mask, gaussian_map, binarize_map
 
 logging.set_verbosity_error()
 
@@ -172,8 +172,8 @@ class MfMOEPipeline(nn.Module):
         # for key in self.d_ref_t2attn.keys():
         #     print(self.d_ref_t2attn[key].keys())
         #     print("Number of attention maps per timestep: ", len(self.d_ref_t2attn[key]))
-        binary_mask = get_token_cross_attention(self.d_ref_t2attn, prompts, self.tokenizer, timestep=21, block='up_blocks.1.attentions.2.transformer_blocks.0.attn2', token_idx=2)
-        cv2.imwrite('./results/mask.png', binary_mask)
+        # binary_mask = get_token_cross_attention(self.d_ref_t2attn, prompts, self.tokenizer, timestep=21, block='up_blocks.1.attentions.2.transformer_blocks.0.attn2', token_idx=2)
+        # cv2.imwrite('./results/mask.png', binary_mask)
         imgs = self.decode_latents(latent.type(torch.cuda.HalfTensor))
         img = T.ToPILImage()(imgs[0].cpu())
         return img, noise_loss_list
@@ -340,22 +340,12 @@ class MfMOEPipeline(nn.Module):
         imgs = self.decode_latents(latent.type(torch.cuda.HalfTensor)) # half tensor for computational efficiency
         img = T.ToPILImage()(imgs[0].cpu())
         return img
-
-
-def preprocess_mask(mask_path, h, w, device):
-    mask = np.array(Image.open(mask_path).convert("L"))
-    mask = mask.astype(np.float16) / 255.0
-    mask = mask[None, None]
-    mask[mask < 0.5] = 0
-    mask[mask >= 0.5] = 1
-    mask = torch.from_numpy(mask).to(device)
-    mask = torch.nn.functional.interpolate(mask, size=(h, w), mode='nearest')
-    return mask
-
+    
+    
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--image_path', type=str, required=True)
-    parser.add_argument('--source_prompt', type=str)
+    parser.add_argument('--source_prompt', type=str, default="")
     parser.add_argument('--mask_paths', nargs='+')
     parser.add_argument('--rec_path', type=str)
     parser.add_argument('--edit_path', type=str)
@@ -379,7 +369,7 @@ if __name__ == '__main__':
     torch.set_default_dtype(torch.float32)
     start = time.time()
     
-    if opt.source_prompt is not None:
+    if opt.source_prompt != "":
         prompt_str =  opt.source_prompt
     else:
     # Initialize BLIP captioner
@@ -423,14 +413,17 @@ if __name__ == '__main__':
     rec_img, noise_loss_list = sd.reconstruct(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, latent=x_t, latent_path=None, latent_list_path=None, num_fgmasks=opt.num_fgmasks+1)
     rec_img.save(opt.rec_path)
 
-    att_map = sd.attention_store['up_cross'][-1]
-    att_map = postprocess_mask(att_map, 3)
-    att_map = att_map.save('./results/mask_up.png')
+    att_map = sum(sd.attention_store['up_cross']) / len(sd.attention_store['up_cross'])
+    att_map1 = postprocess_mask(att_map, 2, gaussian=3, binarize_threshold=128, device=device)
+    att_map2 = postprocess_mask(att_map, 6, gaussian=3, binarize_threshold=150, device=device)
+    
+    fg_masks = torch.cat([att_map1])
 
-    fg_masks = torch.cat([preprocess_mask(mask_path, opt.H // 8, opt.W // 8, device) for mask_path in opt.mask_paths])
+    # fg_masks = torch.cat([preprocess_mask(mask_path, opt.H // 8, opt.W // 8, device) for mask_path in opt.mask_paths])
     bg_mask = 1 - torch.sum(fg_masks, dim=0, keepdim=True)
     bg_mask[bg_mask < 0] = 0
     masks = torch.cat([bg_mask, fg_masks])
+    print(fg_masks.shape)
 
     prompts = [prompt_str] + opt.fg_prompts
     neg_prompts = [prompt_str] + opt.fg_negative

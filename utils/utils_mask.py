@@ -4,23 +4,40 @@ from scipy import ndimage
 from PIL import Image
 
 
-def postprocess_mask(att_map, idx):
+def postprocess_mask(att_map, idx, gaussian=0, binarize_threshold=64, h=512, w=512, device=None):
     att_map = att_map.sum(0) / att_map.shape[0]
     att_map = att_map.reshape(16,16,77)
     att_map = att_map[:,:,idx]
-    print(att_map.max())
     att_map = 255 * att_map / att_map.max()
     att_map = att_map.numpy().astype(np.uint8)
-    att_map = Image.fromarray(att_map).resize((256, 256))
-    return att_map
+    att_map = Image.fromarray(att_map).resize((h, w))
+    # print("att map before smoothing: ", att_map)
+    for i in range(gaussian):
+        att_map = ndimage.gaussian_filter(att_map, sigma=(5,5), order=0)
+    print("att map after smoothing: ", att_map)
+    print("std: ", att_map.max() - att_map.min())
+    att_map[att_map < binarize_threshold] = 0
+    att_map[att_map >= binarize_threshold] = 255
+    att_map = att_map[None, None]
+    att_map = att_map.astype(np.float16) / 255.0
+    att_map = torch.from_numpy(att_map).to(device)
+    print(att_map.shape)
+    mask = torch.nn.functional.interpolate(att_map, size=(h//8, w//8), mode='nearest')
+    return mask
 
 def gaussian_map(att_map):
     return ndimage.gaussian_filter(att_map, sigma=(5,5), order=0)
+
+def binarize_map(att_map, threshold=128):
+    att_map[att_map < threshold] = 0
+    att_map[att_map >= threshold] = 1
+    return att_map
 
 def preprocess_mask(mask_path, h, w, device):
     mask = np.array(Image.open(mask_path).convert("L"))
     mask = mask.astype(np.float16) / 255.0
     mask = mask[None, None]
+    
     mask[mask < 0.5] = 0
     mask[mask >= 0.5] = 1
     mask = torch.from_numpy(mask).to(device)
