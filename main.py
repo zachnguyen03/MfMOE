@@ -164,6 +164,7 @@ class MfMOEPipeline(nn.Module):
 
         for key in self.d_ref_t2attn.keys():
             print(self.d_ref_t2attn[key].keys())
+            print("Number of attention maps per timestep: ", len(self.d_ref_t2attn[key]))
         print("Att map: ", self.d_ref_t2attn[21]['up_blocks.1.attentions.2.transformer_blocks.0.attn2'])
         print("Att map shape: ", self.d_ref_t2attn[21]['up_blocks.1.attentions.2.transformer_blocks.0.attn2'].shape)
         binary_mask = get_token_cross_attention(self.d_ref_t2attn, prompts, self.tokenizer, timestep=21, block='up_blocks.1.attentions.2.transformer_blocks.0.attn2', token_idx=2)
@@ -348,6 +349,7 @@ def preprocess_mask(mask_path, h, w, device):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--image_path', type=str, required=True)
+    parser.add_argument('--source_prompt', type=str)
     parser.add_argument('--mask_paths', nargs='+')
     parser.add_argument('--rec_path', type=str)
     parser.add_argument('--edit_path', type=str)
@@ -370,18 +372,20 @@ if __name__ == '__main__':
     
     torch.set_default_dtype(torch.float32)
     start = time.time()
-    # Initialize BLIP captioner
-    model_blip, vis_processors, _ = load_model_and_preprocess(name="blip_caption", model_type="base_coco", is_eval=True, device=device)
-
-
-    img = Image.open(opt.image_path).resize((512,512), Image.Resampling.LANCZOS)
-    # generate the caption
-    _image = vis_processors["eval"](img).unsqueeze(0).to(device)
-    prompt_str = model_blip.generate({"image": _image})[0]
-    print("Generated source prompt: ", prompt_str)
     
-    del model_blip
-    del vis_processors
+    if opt.source_prompt is not None:
+        prompt_str =  opt.source_prompt
+    else:
+    # Initialize BLIP captioner
+        model_blip, vis_processors, _ = load_model_and_preprocess(name="blip_caption", model_type="base_coco", is_eval=True, device=device)
+        img = Image.open(opt.image_path).resize((512,512), Image.Resampling.LANCZOS)
+        # generate the caption
+        _image = vis_processors["eval"](img).unsqueeze(0).to(device)
+        prompt_str = model_blip.generate({"image": _image})[0]
+        print("Generated source prompt: ", prompt_str)
+        
+        del model_blip
+        del vis_processors
 
     ca_coef = opt.ca_coef
     seg_coef = opt.seg_coef
