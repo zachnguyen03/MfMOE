@@ -77,6 +77,7 @@ class MfMOEPipeline(nn.Module):
 
         self.d_ref_t2attn = {}  
         self.image_latent_ref = {} 
+        self.attention_store = {'up_cross': [], 'mid_cross': [], 'down_cross': []}
 
         print(f'[INFO] loaded stable diffusion!')
 
@@ -148,6 +149,12 @@ class MfMOEPipeline(nn.Module):
                     if module_name == "CrossAttention" and 'attn2' in name:
                         attn_mask = module.attn_probs
                         if attn_mask.shape[1] == 16 * 16: #save only 16x16 maps
+                            if 'up' in name:
+                                self.attention_store['up_cross'].append(attn_mask.detach().cpu())
+                            elif 'mid' in name:
+                                self.attention_store['mid_cross'].append(attn_mask.detach().cpu())
+                            else: # add down block cross attention
+                                self.attention_store['down_cross'].append(attn_mask.detach().cpu())
                             attn_mask = torch.cat(tuple([attn_mask] * num_fgmasks), dim=0)
                             self.d_ref_t2attn[t.item()][name] = attn_mask.detach().cpu()
 
@@ -162,11 +169,9 @@ class MfMOEPipeline(nn.Module):
             latent = latents_view_denoised
             self.image_latent_ref[t.item()] = latent.detach().cpu()
 
-        for key in self.d_ref_t2attn.keys():
-            print(self.d_ref_t2attn[key].keys())
-            print("Number of attention maps per timestep: ", len(self.d_ref_t2attn[key]))
-        print("Att map: ", self.d_ref_t2attn[21]['up_blocks.1.attentions.2.transformer_blocks.0.attn2'])
-        print("Att map shape: ", self.d_ref_t2attn[21]['up_blocks.1.attentions.2.transformer_blocks.0.attn2'].shape)
+        # for key in self.d_ref_t2attn.keys():
+        #     print(self.d_ref_t2attn[key].keys())
+        #     print("Number of attention maps per timestep: ", len(self.d_ref_t2attn[key]))
         binary_mask = get_token_cross_attention(self.d_ref_t2attn, prompts, self.tokenizer, timestep=21, block='up_blocks.1.attentions.2.transformer_blocks.0.attn2', token_idx=2)
         cv2.imwrite('./results/mask.png', binary_mask)
         imgs = self.decode_latents(latent.type(torch.cuda.HalfTensor))
@@ -285,12 +290,13 @@ class MfMOEPipeline(nn.Module):
             loss = 0.0
             loss_ca = 0.0
             loss_seg = 0.0
-            # for name, module in self.unet.named_modules():
-            #     module_name = type(module).__name__
-            #     if module_name == "CrossAttention" and 'attn2' in name:
-            #         curr = module.attn_probs
-            #         ref = self.d_ref_t2attn[t.item()][name].detach().to(device)
-            #         loss_ca += ((curr-ref)**2).sum((1, 2)).mean(0)
+            for name, module in self.unet.named_modules():
+                module_name = type(module).__name__
+                if module_name == "CrossAttention" and 'attn2' in name:
+                    curr = module.attn_probs
+                    if curr.shape[1] == 16 * 16:
+                        ref = self.d_ref_t2attn[t.item()][name].detach().to(device)
+                        loss_ca += ((curr-ref)**2).sum((1, 2)).mean(0)
 
             latents = x_in.chunk(2)[0]
 
@@ -406,10 +412,6 @@ if __name__ == '__main__':
     print("Latent shape: ", x_t.shape)    
     
     del nti
-    
-    # fg_masks = torch.zeros((1, opt.H//8, opt.W//8)) # generate a fixed size fg mask
-    # bg_mask = 1 - torch.sum(fg_masks, dim=0, keepdim=True)
-    # masks = torch.cat([bg_mask, fg_masks])
     masks = None
     
     # controller = AttentionStore()
@@ -420,8 +422,6 @@ if __name__ == '__main__':
 
     rec_img, noise_loss_list = sd.reconstruct(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, latent=x_t, latent_path=None, latent_list_path=None, num_fgmasks=opt.num_fgmasks+1)
     rec_img.save(opt.rec_path)
-    
-    # print("Saved attention maps: ", sd.d_ref_t2attn[981].keys())
 
     fg_masks = torch.cat([preprocess_mask(mask_path, opt.H // 8, opt.W // 8, device) for mask_path in opt.mask_paths])
     bg_mask = 1 - torch.sum(fg_masks, dim=0, keepdim=True)
@@ -433,7 +433,6 @@ if __name__ == '__main__':
     
     print("Prompts: ", prompts)
     print("Negative prompts: ", neg_prompts)
-    # print("Scheduler timesteps: ", sd.scheduler.timesteps)
     start_gen = time.time()
 
     img = sd.generate(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, ca_coef=ca_coef, seg_coef=seg_coef, noise_loss_list=noise_loss_list, latent=x_t, latent_path=None, latent_list_path=None)
