@@ -14,7 +14,7 @@ from lavis.models import load_model_and_preprocess, load_model
 
 from utils.nti import NullInversion
 from utils.ptp_utils import *
-from utils.utils_mask import attention_to_binary_mask
+from utils.utils_mask import attention_to_binary_mask, postprocess_mask, gaussian_map
 
 logging.set_verbosity_error()
 
@@ -423,6 +423,10 @@ if __name__ == '__main__':
     rec_img, noise_loss_list = sd.reconstruct(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, latent=x_t, latent_path=None, latent_list_path=None, num_fgmasks=opt.num_fgmasks+1)
     rec_img.save(opt.rec_path)
 
+    att_map = sd.attention_store['up_cross'][-1]
+    att_map = postprocess_mask(att_map, 3)
+    att_map = att_map.save('./results/mask_up.png')
+
     fg_masks = torch.cat([preprocess_mask(mask_path, opt.H // 8, opt.W // 8, device) for mask_path in opt.mask_paths])
     bg_mask = 1 - torch.sum(fg_masks, dim=0, keepdim=True)
     bg_mask[bg_mask < 0] = 0
@@ -459,6 +463,3 @@ if __name__ == '__main__':
         
     print(f"Total inference time: {end - start} seconds")
     print(f"Editing time: {end - start_gen} seconds")
-
-
-# 120x256x77 (att map 16x16)

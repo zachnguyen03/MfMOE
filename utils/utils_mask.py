@@ -3,6 +3,20 @@ import numpy as np
 from scipy import ndimage
 from PIL import Image
 
+
+def postprocess_mask(att_map, idx):
+    att_map = att_map.sum(0) / att_map.shape[0]
+    att_map = att_map.reshape(16,16,77)
+    att_map = att_map[:,:,idx]
+    print(att_map.max())
+    att_map = 255 * att_map / att_map.max()
+    att_map = att_map.numpy().astype(np.uint8)
+    att_map = Image.fromarray(att_map).resize((256, 256))
+    return att_map
+
+def gaussian_map(att_map):
+    return ndimage.gaussian_filter(att_map, sigma=(5,5), order=0)
+
 def preprocess_mask(mask_path, h, w, device):
     mask = np.array(Image.open(mask_path).convert("L"))
     mask = mask.astype(np.float16) / 255.0

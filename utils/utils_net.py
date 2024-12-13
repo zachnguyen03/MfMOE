@@ -133,15 +133,15 @@ def get_token_cross_attention(attention_store: Dict,
     att_map = attention_store[timestep][block]
     image = att_map.reshape(1, -1, res_h, res_w, att_map.shape[-1])[0]
     image = image.sum(0) / image.shape[0]
-    print("Extracted att map shape: ", image.shape)
+    # print("Extracted att map shape: ", image.shape)
     # image = attention_store[timestep][block][token_idx]
-    print("Single amp shape: ", image.shape)
+    # print("Single amp shape: ", image.shape)
     # image = image.reshape(-1, res_h, res_w)
     image = image[:, :, token_idx]
     image = 255 * image / image.max()
-    print("Image shape map: ", image.shape)
+    # print("Image shape map: ", image.shape)
     image = image.unsqueeze(-1).expand(*image.shape, 3)
-    print("Image shape after unsqueeze: ", image.shape)
+    # print("Image shape after unsqueeze: ", image.shape)
     image = image.numpy().astype(np.uint8)
     image = np.array(Image.fromarray(image).resize((original_resolution[1], original_resolution[0])))
     print(image)
