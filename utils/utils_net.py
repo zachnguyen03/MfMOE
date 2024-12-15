@@ -116,6 +116,7 @@ def show_all_cross_attention(attention_store: AttentionStore,
         image = image.unsqueeze(-1).expand(*image.shape, 3)
         image = image.numpy().astype(np.uint8)
         image = np.array(Image.fromarray(image).resize((original_resolution[1], original_resolution[0])))
+
         images.append(image)
     view_images(np.stack(images, axis=0), img_path=save_path+"/crossattn.png")
 

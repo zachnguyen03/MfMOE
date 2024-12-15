@@ -35,7 +35,7 @@ def text_under_image(image: np.ndarray, text: str, text_color: Tuple[int, int, i
     return img
 
 
-def view_images(images, num_rows=1, offset_ratio=0.02):
+def view_images(images, num_rows=1, offset_ratio=0.02, img_path=None):
     if type(images) is list:
         num_empty = len(images) % num_rows
     elif images.ndim == 4:
@@ -59,6 +59,8 @@ def view_images(images, num_rows=1, offset_ratio=0.02):
                 i * num_cols + j]
 
     pil_img = Image.fromarray(image_)
+    if img_path is not None:
+        pil_img.save(img_path)
 
 
 def diffusion_step(model, controller, latents, context, t, guidance_scale, low_resource=False):

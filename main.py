@@ -14,7 +14,7 @@ from lavis.models import load_model_and_preprocess, load_model
 
 from utils.nti import NullInversion
 from utils.ptp_utils import *
-from utils.utils_mask import preprocess_mask, attention_to_binary_mask, postprocess_mask, gaussian_map, binarize_map
+from utils.utils_mask import show_all_attention_maps, postprocess_mask
 
 logging.set_verbosity_error()
 
@@ -414,10 +414,13 @@ if __name__ == '__main__':
     rec_img.save(opt.rec_path)
 
     att_map = sum(sd.attention_store['up_cross']) / len(sd.attention_store['up_cross'])
-    att_map1 = postprocess_mask(att_map, 2, gaussian=3, binarize_threshold=128, device=device)
-    att_map2 = postprocess_mask(att_map, 6, gaussian=3, binarize_threshold=150, device=device)
+    att_map1 = postprocess_mask(att_map, 5, gaussian=3, binarize_threshold=128, save_path='./results/mask.png', device=device)
+    att_map2 = postprocess_mask(att_map, 7, gaussian=3, binarize_threshold=150, save_path='./results/mask2.png', device=device)
     
-    fg_masks = torch.cat([att_map1])
+    # show att maps
+    show_all_attention_maps(att_map, len(prompts[0]), save_path='./results')
+    
+    fg_masks = torch.cat([att_map1, att_map2])
 
     # fg_masks = torch.cat([preprocess_mask(mask_path, opt.H // 8, opt.W // 8, device) for mask_path in opt.mask_paths])
     bg_mask = 1 - torch.sum(fg_masks, dim=0, keepdim=True)
