@@ -186,10 +186,10 @@ class NullInversion:
         # ptp_utils.register_attention_control(self.model, None)
         image_gt = load_512(image_path, *offsets)
         if verbose:
-            print("DDIM inversion...")
+            print("[INFO] DDIM inversion...")
         image_rec, ddim_latents = self.ddim_inversion(image_gt)
         if verbose:
-            print("Null-text optimization...")
+            print("[INFO] Null-text optimization...")
         uncond_embeddings = self.null_optimization(ddim_latents, num_inner_steps, early_stop_epsilon)
         return (image_gt, image_rec), ddim_latents[-1], uncond_embeddings
         

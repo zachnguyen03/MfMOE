@@ -109,7 +109,6 @@ def show_all_cross_attention(attention_store: AttentionStore,
     res_h, res_w = ceil(original_resolution[0]/32), ceil(original_resolution[1]/32)
     attention_maps = aggregate_attention(attention_store, [prompts[0]], res_h, res_w, from_where, True, 0)
     images = []
-    print("Tokens: ", tokens)
     for i in range(len(tokens)):
         image = attention_maps[:, :, i]
         image = 255 * image / image.max()
@@ -129,7 +128,6 @@ def get_token_cross_attention(attention_store: Dict,
                              original_resolution=(512, 512),
                              token_idx=None):
     tokens = tokenizer.encode(prompts[0])[token_idx]
-    print(tokens)
     res_h, res_w = ceil(original_resolution[0]/32), ceil(original_resolution[1]/32)
     att_map = attention_store[timestep][block]
     image = att_map.reshape(1, -1, res_h, res_w, att_map.shape[-1])[0]
@@ -145,7 +143,6 @@ def get_token_cross_attention(attention_store: Dict,
     # print("Image shape after unsqueeze: ", image.shape)
     image = image.numpy().astype(np.uint8)
     image = np.array(Image.fromarray(image).resize((original_resolution[1], original_resolution[0])))
-    print(image)
     new_image = cv2.convertScaleAbs(image, alpha=1, beta=0)
     thres = 127
     new_image[new_image<=thres] = 0

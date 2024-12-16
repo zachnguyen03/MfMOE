@@ -1,5 +1,6 @@
 from utils.utils_net import prep_unet, AttentionStore, register_attention_control, get_token_cross_attention
 import time
+import os
 from tqdm import tqdm
 from PIL import Image
 import numpy as np
@@ -169,14 +170,18 @@ class MfMOEPipeline(nn.Module):
             latent = latents_view_denoised
             self.image_latent_ref[t.item()] = latent.detach().cpu()
 
-        # for key in self.d_ref_t2attn.keys():
-        #     print(self.d_ref_t2attn[key].keys())
-        #     print("Number of attention maps per timestep: ", len(self.d_ref_t2attn[key]))
-        # binary_mask = get_token_cross_attention(self.d_ref_t2attn, prompts, self.tokenizer, timestep=21, block='up_blocks.1.attentions.2.transformer_blocks.0.attn2', token_idx=2)
-        # cv2.imwrite('./results/mask.png', binary_mask)
+        att_map = sum(sd.attention_store['up_cross']) / len(sd.attention_store['up_cross'])
+        masks = []
+        for i in range(len(opt.token_position)):
+            mask = postprocess_mask(att_map, opt.token_position[i], gaussian=3, binarize_threshold=150, save_path=f'{out_dir}/mask{i+1}.png', device=device)
+            masks.append(mask)
+        fg_masks = torch.cat(masks)
+        show_all_attention_maps(att_map, len(prompts[0].split(' ')), save_path=out_dir)
+
+
         imgs = self.decode_latents(latent.type(torch.cuda.HalfTensor))
         img = T.ToPILImage()(imgs[0].cpu())
-        return img, noise_loss_list
+        return img, noise_loss_list, fg_masks
     
     def invert(
         self,
@@ -241,12 +246,7 @@ class MfMOEPipeline(nn.Module):
     def generate(self, masks, prompts, negative_prompts='', height=512, width=2048, num_inference_steps=50, guidance_scale=7.5, bootstrapping=20, ca_coef=1, seg_coef=0.25, noise_loss_list=None, latent=None, latent_path=None, latent_list_path=None):
 
         bootstrapping_backgrounds = self.get_random_background(bootstrapping)
-        print("Bootstrap background shape: ", bootstrapping_backgrounds.shape)
-
         text_embeds = self.get_text_embeds(prompts, negative_prompts).type(torch.cuda.HalfTensor)
-        print("Text embeds shape: ", text_embeds.shape)
-        # latent = torch.load(latent_path).unsqueeze(0).to(self.device)
-        # latent_list = [x.to(self.device) for x in torch.load(latent_list_path)]
 
         noise = latent.clone().repeat(len(prompts) - 1, 1, 1, 1)
         views = get_views(height, width)
@@ -276,7 +276,6 @@ class MfMOEPipeline(nn.Module):
                 bg = bootstrapping_backgrounds[torch.randint(0, bootstrapping, (len(prompts) - 1,))]
                 bg = self.scheduler.add_noise(bg, noise, t)
                 latent_view[1:] = latent_view[1:] * masks_view[1:] + bg * (1 - masks_view[1:])
-                # print("Latent view: ", latent_view[1:].shape)
 
             latent_model_input = torch.cat([latent_view] * 2).type(torch.cuda.HalfTensor)
 
@@ -343,14 +342,15 @@ class MfMOEPipeline(nn.Module):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--image_path', type=str, required=True)
-    parser.add_argument('--source_prompt', type=str, default="")
     parser.add_argument('--token_position', nargs='+', type=int)
     parser.add_argument('--mask_paths', nargs='+')
     parser.add_argument('--rec_path', type=str)
     parser.add_argument('--edit_path', type=str)
-    parser.add_argument('--save_path', type=str)
+    parser.add_argument('--merged_path', type=str)
     parser.add_argument('--fg_prompts', nargs='+')
     parser.add_argument('--fg_negative', nargs='+')
+    parser.add_argument('--source_prompt', type=str, default="")
+    parser.add_argument('--result_dir', type=str, default='./results')
     parser.add_argument('--sd_version', type=str, default='2.0', choices=['1.4', '1.5', '2.0', 'ip'], help="stable diffusion version")
     parser.add_argument('--H', type=int, default=512)
     parser.add_argument('--W', type=int, default=512)
@@ -362,6 +362,13 @@ if __name__ == '__main__':
     parser.add_argument('--seg_coef', type=float, default=1.75)
 
     opt = parser.parse_args()
+    
+    os.makedirs(opt.result_dir, exist_ok=True)
+    sample_count = len(os.listdir(opt.result_dir))
+    # Create incrementing exp folder to store each result
+    out_dir = os.path.join(opt.result_dir, f'exp_{sample_count}')
+    os.makedirs(out_dir, exist_ok=True)
+    print(f"[INFO] Saving the results in {out_dir}")
 
     device = torch.device('cuda:0')
     
@@ -385,8 +392,6 @@ if __name__ == '__main__':
     ca_coef = opt.ca_coef
     seg_coef = opt.seg_coef
 
-    print(ca_coef, seg_coef)
-
     seed = opt.seed
     seed_everything(seed)
 
@@ -408,23 +413,23 @@ if __name__ == '__main__':
     
 
 
-    rec_img, noise_loss_list = sd.reconstruct(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, latent=x_t, latent_path=None, latent_list_path=None, num_fgmasks=opt.num_fgmasks+1)
-    rec_img.save(opt.rec_path)
+    rec_img, noise_loss_list, fg_masks = sd.reconstruct(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, latent=x_t, latent_path=None, latent_list_path=None, num_fgmasks=opt.num_fgmasks+1)
+    rec_img.save(os.path.join(out_dir, opt.rec_path))
 
-    att_map = sum(sd.attention_store['up_cross']) / len(sd.attention_store['up_cross'])
-    masks = []
-    for i in range(len(opt.token_position)):
-        mask = postprocess_mask(att_map, opt.token_position[i], gaussian=3, binarize_threshold=150, save_path=f'./results/mask{i+1}.png', device=device)
-        masks.append(mask)
+    # att_map = sum(sd.attention_store['up_cross']) / len(sd.attention_store['up_cross'])
+    # masks = []
+    # for i in range(len(opt.token_position)):
+    #     mask = postprocess_mask(att_map, opt.token_position[i], gaussian=3, binarize_threshold=150, save_path=f'./results/mask{i+1}.png', device=device)
+    #     masks.append(mask)
     # show att maps
-    show_all_attention_maps(att_map, len(prompts[0].split(' ')), save_path='./results')
+    # show_all_attention_maps(att_map, len(prompts[0].split(' ')), save_path='./results')
     
 
-    fg_masks = torch.cat(masks)
+    # fg_masks = torch.cat(masks)
+    # Process background mask
     bg_mask = 1 - torch.sum(fg_masks, dim=0, keepdim=True)
     bg_mask[bg_mask < 0] = 0
     masks = torch.cat([bg_mask, fg_masks])
-    print(fg_masks.shape)
 
     prompts = [prompt_str] + opt.fg_prompts
     neg_prompts = [prompt_str] + opt.fg_negative
@@ -437,7 +442,7 @@ if __name__ == '__main__':
 
     end = time.time()
 
-    img.save(opt.edit_path) 
+    img.save(os.path.join(out_dir, opt.edit_path)) 
 
     images = [rec_img, img]
     widths, heights = zip(*(i.size for i in images))
@@ -452,8 +457,8 @@ if __name__ == '__main__':
         new_im.paste(im, (x_offset,0))
         x_offset += im.size[0]
 
-    if opt.save_path:
-        new_im.save(opt.save_path)
+    if opt.merged_path:
+        new_im.save(os.path.join(out_dir, opt.merged_path))
         
     print(f"Total inference time: {end - start} seconds")
     print(f"Editing time: {end - start_gen} seconds")

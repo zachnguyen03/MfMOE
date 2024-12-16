@@ -8,13 +8,11 @@ from utils.ptp_utils import view_images
 
 def postprocess_mask(att_map, idx, gaussian=0, binarize_threshold=64, h=512, w=512, save_path=None, device=None):
     att_map = att_map.sum(0) / att_map.shape[0]
-    print("Averaged map size: ",  att_map.shape)
     att_map = att_map.reshape(16,16,77)
     att_map = att_map[:,:,idx]
     att_map = 255 * att_map / att_map.max()
     att_map = att_map.numpy().astype(np.uint8)
     att_map = Image.fromarray(att_map).resize((h, w))
-    # print("att map before smoothing: ", att_map)
     for i in range(gaussian):
         att_map = ndimage.gaussian_filter(att_map, sigma=(5,5), order=0)
     att_map[att_map < binarize_threshold] = 0
@@ -30,14 +28,13 @@ def postprocess_mask(att_map, idx, gaussian=0, binarize_threshold=64, h=512, w=5
 
 def show_all_attention_maps(att_maps, prompt_length, save_path):
     images = []
-    print("Prompt length: ", prompt_length)
     att_maps = att_maps.sum(0) / att_maps.shape[0]
     att_maps = att_maps.reshape(16,16,77)
     for token in range(prompt_length):
         att_map = att_maps[:,:,token+1] # first token is <START> -> omit
         att_map = 255 * att_map / att_map.max()
         att_map = Image.fromarray(att_map.numpy().astype(np.uint8)).resize((256, 256))
-        att_map.save(f'./results/attn_{token+1}.png')
+        att_map.save(f'{save_path}/attn_{token+1}.png')
         images.append(att_map)
     # view_images(np.stack(images, axis=0), img_path=save_path+"/crossattn.png")
 
