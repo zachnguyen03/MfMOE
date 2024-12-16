@@ -30,13 +30,12 @@ def postprocess_mask(att_map, idx, gaussian=0, binarize_threshold=64, h=512, w=5
 
 def show_all_attention_maps(att_maps, prompt_length, save_path):
     images = []
+    print("Prompt length: ", prompt_length)
     att_maps = att_maps.sum(0) / att_maps.shape[0]
     att_maps = att_maps.reshape(16,16,77)
     for token in range(prompt_length):
-        att_map = att_maps[:,:,token+1]
+        att_map = att_maps[:,:,token+1] # first token is <START> -> omit
         att_map = 255 * att_map / att_map.max()
-        # for i in range(3):
-        #     att_map = ndimage.gaussian_filter(att_map, sigma=(5,5), order=0)
         att_map = Image.fromarray(att_map.numpy().astype(np.uint8)).resize((256, 256))
         att_map.save(f'./results/attn_{token+1}.png')
         images.append(att_map)

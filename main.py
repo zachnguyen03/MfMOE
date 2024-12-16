@@ -330,8 +330,6 @@ class MfMOEPipeline(nn.Module):
             noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
             latents_view_denoised = self.scheduler.step(noise_pred, t, latents)['prev_sample']
-            # if noise_loss_list is not None:
-            #     latents_view_denoised=latents_view_denoised+noise_loss_list[i]
 
             latent = (latents_view_denoised * masks_view).sum(dim=0, keepdims=True)
             count = masks_view.sum(dim=0, keepdims=True)
@@ -346,6 +344,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--image_path', type=str, required=True)
     parser.add_argument('--source_prompt', type=str, default="")
+    parser.add_argument('--token_position', nargs='+', type=int)
     parser.add_argument('--mask_paths', nargs='+')
     parser.add_argument('--rec_path', type=str)
     parser.add_argument('--edit_path', type=str)
@@ -403,26 +402,25 @@ if __name__ == '__main__':
     
     del nti
     masks = None
-    
-    # controller = AttentionStore()
-    # register_attention_control(sd, controller)
 
     prompts = [prompt_str]
     neg_prompts = [prompt_str]
+    
+
 
     rec_img, noise_loss_list = sd.reconstruct(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, latent=x_t, latent_path=None, latent_list_path=None, num_fgmasks=opt.num_fgmasks+1)
     rec_img.save(opt.rec_path)
 
     att_map = sum(sd.attention_store['up_cross']) / len(sd.attention_store['up_cross'])
-    att_map1 = postprocess_mask(att_map, 5, gaussian=3, binarize_threshold=128, save_path='./results/mask.png', device=device)
-    att_map2 = postprocess_mask(att_map, 7, gaussian=3, binarize_threshold=150, save_path='./results/mask2.png', device=device)
-    
+    masks = []
+    for i in range(len(opt.token_position)):
+        mask = postprocess_mask(att_map, opt.token_position[i], gaussian=3, binarize_threshold=150, save_path=f'./results/mask{i+1}.png', device=device)
+        masks.append(mask)
     # show att maps
-    show_all_attention_maps(att_map, len(prompts[0]), save_path='./results')
+    show_all_attention_maps(att_map, len(prompts[0].split(' ')), save_path='./results')
     
-    fg_masks = torch.cat([att_map1, att_map2])
 
-    # fg_masks = torch.cat([preprocess_mask(mask_path, opt.H // 8, opt.W // 8, device) for mask_path in opt.mask_paths])
+    fg_masks = torch.cat(masks)
     bg_mask = 1 - torch.sum(fg_masks, dim=0, keepdim=True)
     bg_mask[bg_mask < 0] = 0
     masks = torch.cat([bg_mask, fg_masks])
