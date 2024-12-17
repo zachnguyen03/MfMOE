@@ -411,21 +411,9 @@ if __name__ == '__main__':
     prompts = [prompt_str]
     neg_prompts = [prompt_str]
     
-
-
     rec_img, noise_loss_list, fg_masks = sd.reconstruct(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, latent=x_t, latent_path=None, latent_list_path=None, num_fgmasks=opt.num_fgmasks+1)
     rec_img.save(os.path.join(out_dir, opt.rec_path))
-
-    # att_map = sum(sd.attention_store['up_cross']) / len(sd.attention_store['up_cross'])
-    # masks = []
-    # for i in range(len(opt.token_position)):
-    #     mask = postprocess_mask(att_map, opt.token_position[i], gaussian=3, binarize_threshold=150, save_path=f'./results/mask{i+1}.png', device=device)
-    #     masks.append(mask)
-    # show att maps
-    # show_all_attention_maps(att_map, len(prompts[0].split(' ')), save_path='./results')
     
-
-    # fg_masks = torch.cat(masks)
     # Process background mask
     bg_mask = 1 - torch.sum(fg_masks, dim=0, keepdim=True)
     bg_mask[bg_mask < 0] = 0
