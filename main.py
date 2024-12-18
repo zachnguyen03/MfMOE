@@ -173,15 +173,15 @@ class MfMOEPipeline(nn.Module):
         att_map = sum(sd.attention_store['up_cross']) / len(sd.attention_store['up_cross'])
         masks = []
         for i in range(len(opt.token_position)):
-            mask = postprocess_mask(att_map, opt.token_position[i], gaussian=3, binarize_threshold=150, save_path=f'{out_dir}/mask{i+1}.png', device=device)
+            mask = postprocess_mask(att_map, opt.token_position[i], gaussian=1, binarize_threshold=150, save_path=f'{out_dir}/mask{i+1}.png', device=device)
             masks.append(mask)
-        fg_masks = torch.cat(masks)
+        masks = torch.cat(masks)
         show_all_attention_maps(att_map, len(prompts[0].split(' ')), save_path=out_dir)
 
 
         imgs = self.decode_latents(latent.type(torch.cuda.HalfTensor))
         img = T.ToPILImage()(imgs[0].cpu())
-        return img, noise_loss_list, fg_masks
+        return img, noise_loss_list, masks
     
     def invert(
         self,
@@ -358,8 +358,8 @@ if __name__ == '__main__':
     parser.add_argument('--steps', type=int, default=50)
     parser.add_argument('--bootstrapping', type=int, default=20)
     parser.add_argument('--num_fgmasks', type=int, default=1)
-    parser.add_argument('--ca_coef', type=float, default=1.0)
-    parser.add_argument('--seg_coef', type=float, default=1.75)
+    parser.add_argument('--ca_coef', type=float, default=0.2)
+    parser.add_argument('--seg_coef', type=float, default=0.2)
 
     opt = parser.parse_args()
     

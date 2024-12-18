@@ -2,6 +2,8 @@ import torch
 import numpy as np
 from scipy import ndimage
 from PIL import Image
+import cv2
+from scipy.ndimage import label, find_objects, measurements
 
 from utils.ptp_utils import view_images
 
@@ -17,6 +19,7 @@ def postprocess_mask(att_map, idx, gaussian=0, binarize_threshold=64, h=512, w=5
         att_map = ndimage.gaussian_filter(att_map, sigma=(5,5), order=0)
     att_map[att_map < binarize_threshold] = 0
     att_map[att_map >= binarize_threshold] = 255
+    # att_map = filter_small_regions(att_map)
     if save_path is not None:
         refined_mask = Image.fromarray(att_map)
         refined_mask = refined_mask.save(save_path)
@@ -98,3 +101,16 @@ def attention_to_binary_mask(attention_map, threshold=0.5, min_region_size=100):
     binary_mask = ndimage.binary_fill_holes(binary_mask)
     
     return binary_mask.astype(np.uint8)
+
+
+def filter_small_regions(mask, region_thres=64*255):
+    if len(mask.shape) == 3:
+        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+    labeled_image, num_features = label(mask)
+    regions = find_objects(labeled_image)
+    for i, region in enumerate(regions):
+        if region is not None:
+            area = measurements.sum(labeled_image[region], labeled_image[region], index=i+1)
+            if area < region_thres:
+                mask[region] = 0
+    return mask
