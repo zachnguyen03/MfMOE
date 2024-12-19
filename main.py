@@ -1,6 +1,7 @@
 from utils.utils_net import prep_unet, AttentionStore, register_attention_control, get_token_cross_attention
 import time
 import os
+import json
 from tqdm import tqdm
 from PIL import Image
 import numpy as np
@@ -368,6 +369,9 @@ if __name__ == '__main__':
     # Create incrementing exp folder to store each result
     out_dir = os.path.join(opt.result_dir, f'exp_{sample_count}')
     os.makedirs(out_dir, exist_ok=True)
+    # Save configuration in result directory
+    with open(os.path.join(out_dir, 'config.json'), 'w', encoding='utf-8') as f:
+        json.dump(vars(opt), f, ensure_ascii=False,  indent=4)
     print(f"[INFO] Saving the results in {out_dir}")
 
     device = torch.device('cuda:0')
