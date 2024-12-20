@@ -48,3 +48,13 @@ The following installation suppose `python=3.9` `pytorch=2.0.1` and `cuda>=11.7`
     --seed <insert seed> \
     --save_path <insert save path of merged reconstructed and edited images>
   ```
+
+## :fireworks: Demo app :fireworks:
+- To test the demo app, run the following command
+  ```
+    python app.py
+  ```
+
+- Steps to run the editing process: upload image :arrow_right: Generate Prompt :arrow_right: Specify token position, editing and negative prompts :arrow_right: Run
+
+- User interface preview ![demo](./assets/demo.png)
