@@ -174,7 +174,7 @@ class MfMOEPipeline(nn.Module):
         att_map = sum(sd.attention_store['up_cross']) / len(sd.attention_store['up_cross'])
         masks = []
         for i in range(len(opt.token_position)):
-            mask = postprocess_mask(att_map, opt.token_position[i], gaussian=1, binarize_threshold=150, save_path=f'{out_dir}/mask{i+1}.png', device=device)
+            mask = postprocess_mask(att_map, opt.token_position[i], gaussian=1, binarize_threshold=128, save_path=f'{out_dir}/mask{i+1}.png', device=device)
             masks.append(mask)
         masks = torch.cat(masks)
         show_all_attention_maps(att_map, len(prompts[0].split(' ')), save_path=out_dir)
@@ -350,6 +350,7 @@ if __name__ == '__main__':
     parser.add_argument('--merged_path', type=str)
     parser.add_argument('--fg_prompts', nargs='+')
     parser.add_argument('--fg_negative', nargs='+')
+    parser.add_argument('--bg_negative', type=str)
     parser.add_argument('--source_prompt', type=str, default="")
     parser.add_argument('--result_dir', type=str, default='./results')
     parser.add_argument('--sd_version', type=str, default='2.0', choices=['1.4', '1.5', '2.0', 'ip'], help="stable diffusion version")
@@ -424,7 +425,7 @@ if __name__ == '__main__':
     masks = torch.cat([bg_mask, fg_masks])
 
     prompts = [prompt_str] + opt.fg_prompts
-    neg_prompts = [prompt_str] + opt.fg_negative
+    neg_prompts = [opt.bg_negative] + opt.fg_negative
     
     print("Prompts: ", prompts)
     print("Negative prompts: ", neg_prompts)
