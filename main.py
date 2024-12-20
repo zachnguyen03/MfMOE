@@ -116,7 +116,7 @@ class MfMOEPipeline(nn.Module):
         return imgs
 
     @torch.no_grad()
-    def reconstruct(self, masks, prompts, negative_prompts='', height=512, width=2048, num_inference_steps=50, guidance_scale=7.5, bootstrapping=20, latent=None, latent_path=None, latent_list_path=None, num_fgmasks=2):
+    def reconstruct(self, masks, prompts, negative_prompts='', height=512, width=2048, num_inference_steps=50, guidance_scale=7.5, bootstrapping=20, latent=None, latent_path=None, latent_list_path=None, num_fgmasks=2, token_positions=None, out_dir='./results'):
 
         bootstrapping_backgrounds = self.get_random_background(bootstrapping)
 
@@ -171,10 +171,11 @@ class MfMOEPipeline(nn.Module):
             latent = latents_view_denoised
             self.image_latent_ref[t.item()] = latent.detach().cpu()
 
-        att_map = sum(sd.attention_store['up_cross']) / len(sd.attention_store['up_cross'])
+        att_map = sum(self.attention_store['up_cross']) / len(self.attention_store['up_cross'])
+        print("att map size: ", att_map.shape)
         masks = []
-        for i in range(len(opt.token_position)):
-            mask = postprocess_mask(att_map, opt.token_position[i], gaussian=1, binarize_threshold=128, save_path=f'{out_dir}/mask{i+1}.png', device=device)
+        for i in range(len(token_positions)):
+            mask = postprocess_mask(att_map, token_positions[i], gaussian=1, binarize_threshold=128, save_path=f'{out_dir}/mask{i+1}.png', device=self.device)
             masks.append(mask)
         masks = torch.cat(masks)
         show_all_attention_maps(att_map, len(prompts[0].split(' ')), save_path=out_dir)
@@ -260,7 +261,7 @@ class MfMOEPipeline(nn.Module):
 
         mask_tensor = masks[0]
         mask_tensor = mask_tensor.squeeze(0)
-        mask_tensor = torch.Tensor(np.array([np.array(mask_tensor.cpu())] * 4)).to(device)
+        mask_tensor = torch.Tensor(np.array([np.array(mask_tensor.cpu())] * 4)).to(self.device)
         
 
         self.scheduler.set_timesteps(num_inference_steps)
@@ -295,7 +296,7 @@ class MfMOEPipeline(nn.Module):
                 if module_name == "CrossAttention" and 'attn2' in name:
                     curr = module.attn_probs
                     if curr.shape[1] == 16 * 16:
-                        ref = self.d_ref_t2attn[t.item()][name].detach().to(device)
+                        ref = self.d_ref_t2attn[t.item()][name].detach().to(self.device)
                         loss_ca += ((curr-ref)**2).sum((1, 2)).mean(0)
 
             latents = x_in.chunk(2)[0]
@@ -312,7 +313,7 @@ class MfMOEPipeline(nn.Module):
             latent = torch.where(count > 0, latent / count, latent) # 00:57
 
             latent_cur = latent.squeeze(0)
-            latent_ref = self.image_latent_ref[t.item()].detach().to(device).squeeze(0)
+            latent_ref = self.image_latent_ref[t.item()].detach().to(self.device).squeeze(0)
 
             loss_seg += (torch.multiply(mask_tensor, latent_cur - latent_ref)**2).sum((1, 2)).mean(0)
 
@@ -345,9 +346,9 @@ if __name__ == '__main__':
     parser.add_argument('--image_path', type=str, required=True)
     parser.add_argument('--token_position', nargs='+', type=int)
     parser.add_argument('--mask_paths', nargs='+')
-    parser.add_argument('--rec_path', type=str)
-    parser.add_argument('--edit_path', type=str)
-    parser.add_argument('--merged_path', type=str)
+    parser.add_argument('--rec_path', type=str, default='reconstructed_image.png')
+    parser.add_argument('--edit_path', type=str, default='edited_image.png')
+    parser.add_argument('--merged_path', type=str, default='merged_image.png')
     parser.add_argument('--fg_prompts', nargs='+')
     parser.add_argument('--fg_negative', nargs='+')
     parser.add_argument('--bg_negative', type=str)
@@ -360,8 +361,8 @@ if __name__ == '__main__':
     parser.add_argument('--steps', type=int, default=50)
     parser.add_argument('--bootstrapping', type=int, default=20)
     parser.add_argument('--num_fgmasks', type=int, default=1)
-    parser.add_argument('--ca_coef', type=float, default=0.2)
-    parser.add_argument('--seg_coef', type=float, default=0.2)
+    parser.add_argument('--ca_coef', type=float, default=1.0)
+    parser.add_argument('--seg_coef', type=float, default=1.75)
 
     opt = parser.parse_args()
     
@@ -416,7 +417,7 @@ if __name__ == '__main__':
     prompts = [prompt_str]
     neg_prompts = [prompt_str]
     
-    rec_img, noise_loss_list, fg_masks = sd.reconstruct(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, latent=x_t, latent_path=None, latent_list_path=None, num_fgmasks=opt.num_fgmasks+1)
+    rec_img, noise_loss_list, fg_masks = sd.reconstruct(masks, prompts, neg_prompts, opt.H, opt.W, opt.steps, bootstrapping=opt.bootstrapping, latent=x_t, latent_path=None, latent_list_path=None, num_fgmasks=opt.num_fgmasks+1, token_positions=opt.token_position, out_dir=opt.result_dir)
     rec_img.save(os.path.join(out_dir, opt.rec_path))
     
     # Process background mask
