@@ -36,17 +36,21 @@ The following installation suppose `python=3.9` `pytorch=2.0.1` and `cuda>=11.7`
     python main.py \
     --sd_version 2.0 \
     --image_path <insert path to source image> \
+    --source_prompt <insert source prompt if given> \
+    --token_position <insert token position of editing objects> \
     --mask_paths <insert paths to masks> \
     --fg_negative <insert negative prompts> \
+    --bg_negative <insert negative prompt for background> \
     --H 512 \
     --W 512 \
     --bootstrapping <insert number of bootstrapping steps> \
+    --result_dir <insert directory to save results> \
     --rec_path <insert save path of reconstructed image> \
     --edit_path <insert save path of edited image> \
+    --merged_path <insert save path of merged reconstructed and edited images> \
     --fg_prompts <insert prompts for each mask> \
     --num_fgmasks <insert number of masks to edit> \
     --seed <insert seed> \
-    --save_path <insert save path of merged reconstructed and edited images>
   ```
 
 ## :fireworks: Demo app :fireworks:
